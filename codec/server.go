@@ -2,9 +2,12 @@ package codec
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
+	"reflect"
+	"sync"
 )
 
 const MagicNumber = 0x3bef5c
@@ -73,6 +76,93 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 	s.serveCodec(f(conn))
 }
 
-func (s *Server) serveCodec(c Codec) {
 
+var invalidRequest = struct{}{}
+
+func (s *Server) serveCodec(c Codec) {
+	sending := new(sync.Mutex)       //make sure to send a complete response
+	wg:= new(sync.WaitGroup)
+	for{
+		req,err := s.readRequest(c)
+		if err !=nil{
+			if req ==nil{
+				break
+			}
+			req.h.Error = err.Error()
+			s.sendResponse(c,req.h,invalidRequest,sending)
+			continue
+		}
+		wg.Add(1)
+		go s.handleRequest(c,req,sending,wg)
+	}
+	wg.Wait()
+	_ = c.Close()
+}
+
+type request struct{
+	h  *Header //header of  request
+	argv,replyv reflect.Value // argv and replyv of request
+}
+
+
+
+
+
+
+/**
+@read request header from client
+**/
+func (s *Server)readRequestHeader(c Codec)(*Header,error){
+	var h Header
+	if err := c.ReadHeader(&h);err != nil {
+		if err !=io.EOF && err != io.ErrUnexpectedEOF{
+			log.Println("rpc server : read header error:",err)
+		}
+		return nil,err
+	}
+	return &h,nil
+}
+
+
+/**
+@read request base header
+**/
+func (s *Server)readRequest(c Codec)(*request,error){
+	h,err := s.readRequestHeader(c)
+	if err != nil {
+		return nil, err
+	}
+	req:=&request{
+		h:h,
+	}
+	//TODO :
+
+	req.argv = reflect.New(reflect.TypeOf(""))
+	if err = c.ReadBody(req.argv.Interface());err != nil {
+		log.Println("rpc server:read argv err:",err)
+	}
+	return req,nil
+}
+
+
+/**
+@send msg to client
+*/
+
+func(s *Server)sendResponse(c Codec,h *Header,body interface{},sending *sync.Mutex){
+	sending.Lock()
+	defer sending.Unlock()
+	if err :=c.Write(h,body);err !=nil{
+		log.Println("rpc server : write response error:",err)
+	}
+}
+
+/**
+process the request
+ */
+func (s *Server)handleRequest(c Codec,req *request,sending *sync.Mutex,wg *sync.WaitGroup){
+	defer wg.Done()
+	log.Println(req.h,req.argv.Elem())
+	req.replyv = reflect.ValueOf(fmt.Sprintf("grpc resp %d",req.h.Seq))
+	s.sendResponse(c,req.h,req.replyv.Interface(),sending)
 }
