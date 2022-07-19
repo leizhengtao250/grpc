@@ -60,7 +60,8 @@ func newService(rcvr interface{}) *service {
 	if !ast.IsExported(s.name) {
 		log.Fatal("rpc server:%s is not a vaild service name", s.name)
 	}
-	s.Re
+	s.registerMethods()
+	return s
 }
 
 func (s *service) registerMethods() {
@@ -68,6 +69,30 @@ func (s *service) registerMethods() {
 	for i := 0; i < s.typ.NumMethod(); i++ {
 		method := s.typ.Method(i)
 		mType := method.Type
+		if mType.NumIn() != 3 || mType.NumOut() != 1 {
+			continue
+		}
+		if mType.Out(0) != reflect.TypeOf((*error)(nil)).Elem() {
+			continue
+		}
+		argType, replyType := mType.In(1), mType.In(2)
+		if !isExportedOrBuiltinType(argType) || !isExportedOrBuiltinType(replyType) {
+
+		}
 
 	}
+
+}
+
+func isExportedOrBuiltinType(t reflect.Type) bool {
+	return ast.IsExported(t.Name()) || t.PkgPath() == ""
+}
+func (s *service) call(m *methodType, argv, replyv reflect.Value) error {
+	atomic.AddUint64(&m.numCalls, 1)
+	f := m.method.Func
+	returnValues := f.Call([]reflect.Value{s.rcvr, argv, replyv})
+	if errInter := returnValues[0].Interface(); errInter != nil {
+		return errInter.(error)
+	}
+	return nil
 }
