@@ -8,6 +8,7 @@ import (
 	"net"
 	"reflect"
 	"sync"
+	"time"
 )
 
 const MagicNumber = 0x3bef5c
@@ -27,11 +28,17 @@ const MagicNumber = 0x3bef5c
 type Option struct {
 	MagicNumber int
 	CodecType   Type
+	/**
+	添加超时处理
+	**/
+	ConnectTimeout time.Duration
+	HandleTimeout  time.Duration
 }
 
 var DefaultOption = &Option{
-	MagicNumber: MagicNumber,
-	CodecType:   GobType,
+	MagicNumber:    MagicNumber,
+	CodecType:      GobType,
+	ConnectTimeout: 10 * time.Second,
 }
 
 //Server represent an RPC Server
@@ -76,93 +83,85 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 	s.serveCodec(f(conn))
 }
 
-
 var invalidRequest = struct{}{}
 
 func (s *Server) serveCodec(c Codec) {
-	sending := new(sync.Mutex)       //make sure to send a complete response
-	wg:= new(sync.WaitGroup)
-	for{
-		req,err := s.readRequest(c)
-		if err !=nil{
-			if req ==nil{
+	sending := new(sync.Mutex) //make sure to send a complete response
+	wg := new(sync.WaitGroup)
+	for {
+		req, err := s.readRequest(c)
+		if err != nil {
+			if req == nil {
 				break
 			}
 			req.h.Error = err.Error()
-			s.sendResponse(c,req.h,invalidRequest,sending)
+			s.sendResponse(c, req.h, invalidRequest, sending)
 			continue
 		}
 		wg.Add(1)
-		go s.handleRequest(c,req,sending,wg)
+		go s.handleRequest(c, req, sending, wg)
 	}
 	wg.Wait()
 	_ = c.Close()
 }
 
-type request struct{
-	h  *Header //header of  request
-	argv,replyv reflect.Value // argv and replyv of request
+type request struct {
+	h            *Header       //header of  request
+	argv, replyv reflect.Value // argv and replyv of request
 }
-
-
-
-
-
 
 /**
 @read request header from client
 **/
-func (s *Server)readRequestHeader(c Codec)(*Header,error){
+func (s *Server) readRequestHeader(c Codec) (*Header, error) {
 	var h Header
-	if err := c.ReadHeader(&h);err != nil {
-		if err !=io.EOF && err != io.ErrUnexpectedEOF{
-			log.Println("rpc server : read header error:",err)
+	if err := c.ReadHeader(&h); err != nil {
+		if err != io.EOF && err != io.ErrUnexpectedEOF {
+			log.Println("rpc server : read header error:", err)
 		}
-		return nil,err
+		return nil, err
 	}
-	return &h,nil
+	return &h, nil
 }
-
 
 /**
 @read request base header
 **/
-func (s *Server)readRequest(c Codec)(*request,error){
-	h,err := s.readRequestHeader(c)
+func (s *Server) readRequest(c Codec) (*request, error) {
+	h, err := s.readRequestHeader(c)
 	if err != nil {
 		return nil, err
 	}
-	req:=&request{
-		h:h,
+	req := &request{
+		h: h,
 	}
 	//TODO :
 
 	req.argv = reflect.New(reflect.TypeOf(""))
-	if err = c.ReadBody(req.argv.Interface());err != nil {
-		log.Println("rpc server:read argv err:",err)
+	if err = c.ReadBody(req.argv.Interface()); err != nil {
+		log.Println("rpc server:read argv err:", err)
 	}
-	return req,nil
+	return req, nil
 }
-
 
 /**
 @send msg to client
 */
 
-func(s *Server)sendResponse(c Codec,h *Header,body interface{},sending *sync.Mutex){
+func (s *Server) sendResponse(c Codec, h *Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
 	defer sending.Unlock()
-	if err :=c.Write(h,body);err !=nil{
-		log.Println("rpc server : write response error:",err)
+	if err := c.Write(h, body); err != nil {
+		log.Println("rpc server : write response error:", err)
 	}
 }
 
 /**
 process the request
- */
-func (s *Server)handleRequest(c Codec,req *request,sending *sync.Mutex,wg *sync.WaitGroup){
+*/
+func (s *Server) handleRequest(c Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
 	defer wg.Done()
-	log.Println(req.h,req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("grpc resp %d",req.h.Seq))
-	s.sendResponse(c,req.h,req.replyv.Interface(),sending)
+	log.Println(req.h, req.argv.Elem())
+	req.replyv = reflect.ValueOf(fmt.Sprintf("grpc resp %d", req.h.Seq))
+	s.sendResponse(c, req.h, req.replyv.Interface(), sending)
 }
