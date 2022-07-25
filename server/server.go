@@ -78,7 +78,7 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 		log.Printf("rpc server:invaild magic number %x", opt.MagicNumber)
 		return
 	}
-	f := NewCodecFuncMap[opt.CodecType] //get the process function
+	f := codec.NewCodecFuncMap[opt.CodecType] //get the process function
 	if f == nil {
 		log.Printf("rpc server:invaild codec type %s", opt.CodecType)
 		return
@@ -88,7 +88,7 @@ func (s *Server) ServeConn(conn io.ReadWriteCloser) {
 
 var invalidRequest = struct{}{}
 
-func (s *Server) serveCodec(c Codec) {
+func (s *Server) serveCodec(c codec.Codec) {
 	sending := new(sync.Mutex) //make sure to send a complete response
 	wg := new(sync.WaitGroup)
 	for {
@@ -102,22 +102,24 @@ func (s *Server) serveCodec(c Codec) {
 			continue
 		}
 		wg.Add(1)
-		go s.handleRequest(c, req, sending, wg)
+		go s.handleRequest(c, req, sending, wg, DefaultOption.ConnectTimeout)
 	}
 	wg.Wait()
 	_ = c.Close()
 }
 
 type request struct {
-	h            *Header       //header of  request
+	h            *codec.Header //header of  request
 	argv, replyv reflect.Value // argv and replyv of request
+	mtype        *methodType
+	svc          *service
 }
 
 /**
 @read request header from client
 **/
-func (s *Server) readRequestHeader(c Codec) (*Header, error) {
-	var h Header
+func (s *Server) readRequestHeader(c codec.Codec) (*codec.Header, error) {
+	var h codec.Header
 	if err := c.ReadHeader(&h); err != nil {
 		if err != io.EOF && err != io.ErrUnexpectedEOF {
 			log.Println("rpc server : read header error:", err)
@@ -130,7 +132,7 @@ func (s *Server) readRequestHeader(c Codec) (*Header, error) {
 /**
 @read request base header
 **/
-func (s *Server) readRequest(c Codec) (*request, error) {
+func (s *Server) readRequest(c codec.Codec) (*request, error) {
 	h, err := s.readRequestHeader(c)
 	if err != nil {
 		return nil, err
@@ -151,7 +153,7 @@ func (s *Server) readRequest(c Codec) (*request, error) {
 @send msg to client
 */
 
-func (s *Server) sendResponse(c Codec, h *Header, body interface{}, sending *sync.Mutex) {
+func (s *Server) sendResponse(c codec.Codec, h *codec.Header, body interface{}, sending *sync.Mutex) {
 	sending.Lock()
 	defer sending.Unlock()
 	if err := c.Write(h, body); err != nil {
@@ -162,11 +164,41 @@ func (s *Server) sendResponse(c Codec, h *Header, body interface{}, sending *syn
 /**
 process the request
 */
-func (s *Server) handleRequest(c Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+// func (s *Server) handleRequest(c codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
+// 	defer wg.Done()
+// 	log.Println(req.h, req.argv.Elem())
+// 	req.replyv = reflect.ValueOf(fmt.Sprintf("grpc resp %d", req.h.Seq))
+// 	s.sendResponse(c, req.h, req.replyv.Interface(), sending)
+// }
+
+func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
-	log.Println(req.h, req.argv.Elem())
-	req.replyv = reflect.ValueOf(fmt.Sprintf("grpc resp %d", req.h.Seq))
-	s.sendResponse(c, req.h, req.replyv.Interface(), sending)
+	called := make(chan struct{})
+	sent := make(chan struct{})
+	go func() {
+		err := req.svc.Call(req.mtype, req.argv, req.replyv)
+		called <- struct{}{}
+		if err != nil {
+			req.h.Error = err.Error()
+			server.sendResponse(cc, req.h, invalidRequest, sending)
+			sent <- struct{}{}
+			return
+		}
+		server.sendResponse(cc, req.h, req.replyv.Interface(), sending)
+		sent <- struct{}{}
+	}()
+	if timeout == 0 {
+		<-called
+		<-sent
+		return
+	}
+	select {
+	case <-time.After(timeout):
+		req.h.Error = fmt.Sprintf("rpc server:request handle timeout:%s", timeout)
+		server.sendResponse(cc, req.h, invalidRequest, sending)
+	case <-called:
+		<-sent
+	}
 }
 
 /**
@@ -220,7 +252,7 @@ func NewService(rcvr interface{}) *service {
 	s.name = reflect.Indirect(s.rcvr).Type().Name()
 	s.typ = reflect.TypeOf(rcvr)
 	if !ast.IsExported(s.name) {
-		log.Fatal("rpc server:%s is not a vaild service name", s.name)
+		log.Printf("rpc server:%s is not a vaild service name", s.name)
 	}
 	s.registerMethods()
 	return s
@@ -257,8 +289,4 @@ func (s *service) Call(m *methodType, argv, replyv reflect.Value) error {
 		return errInter.(error)
 	}
 	return nil
-}
-
-func (server *codec.Server) handleRequest(cc codec.Codec, req *server.requeset, sending *sync.WaitGroup, timeout time.Duration) {
-
 }
