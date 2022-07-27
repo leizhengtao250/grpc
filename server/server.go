@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -290,4 +291,37 @@ func (s *service) Call(m *methodType, argv, replyv reflect.Value) error {
 	}
 	return nil
 	//zhushi
+}
+
+/**
+为了增加其中的rpc代理服务器之间的联系
+*/
+
+const (
+	connected        = "200 Connected to Gee RPC"
+	DefaultRpcPath   = "/_geeprc_"
+	DefaultDebugPath = "/debug/geerpc"
+)
+
+func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain;charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Print("rpc hijacking", req.RemoteAddr, ":", err.Error())
+		return
+	}
+	_, _ = io.WriteString(conn, "HTTP/1.0"+connected+"\n\n")
+	server.ServeConn(conn)
+}
+
+func (server *Server) HandleHTTP() {
+	http.Handle(DefaultRpcPath, server)
+}
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }
