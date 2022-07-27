@@ -3,7 +3,7 @@ package test
 import (
 	"fmt"
 	client "grpc/Client"
-	"grpc/codec"
+	"grpc/server"
 	"testing"
 )
 
@@ -24,11 +24,10 @@ func Test_client(t *testing.T) {
 
 	address := "127.0.0.1:8999"
 	network := "tcp"
-	cli, err := client.Dial(network, address, codec.DefaultOption)
+	cli, err := client.Dial(network, address, server.DefaultOption)
 	if err != nil {
 		return
 	}
 	defer cli.Close()
-	cli.registerCall
 
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"grpc/codec"
+	"grpc/server"
 	"log"
 	"net"
 	"sync"
@@ -50,7 +51,7 @@ with a single Client and a Client may be used by multiple goroutines simultanous
 **/
 type Client struct {
 	cc        codec.Codec
-	opt       *codec.Option
+	opt       *server.Option
 	sending   sync.Mutex //protect following
 	header    codec.Header
 	mu        sync.Mutex //protect following
@@ -161,7 +162,7 @@ func (client *Client) recieve() {
 	1.和server协商好编解码的方式
 	2.开启子协程receive()接收响应
 **/
-func NewClient(conn net.Conn, opt *codec.Option) (*Client, error) {
+func NewClient(conn net.Conn, opt *server.Option) (*Client, error) {
 	f := codec.NewCodecFuncMap[opt.CodecType]
 	if f == nil {
 		err := fmt.Errorf("invaild codec type %s", opt.CodecType)
@@ -171,7 +172,7 @@ func NewClient(conn net.Conn, opt *codec.Option) (*Client, error) {
 	return newClientCodec(f(conn), opt), nil
 }
 
-func newClientCodec(cc codec.Codec, opt *codec.Option) *Client {
+func newClientCodec(cc codec.Codec, opt *server.Option) *Client {
 	client := &Client{
 		seq:     1,
 		cc:      cc,
@@ -182,17 +183,17 @@ func newClientCodec(cc codec.Codec, opt *codec.Option) *Client {
 	return client
 }
 
-func parseOption(opts ...*codec.Option) (*codec.Option, error) {
+func parseOption(opts ...*server.Option) (*server.Option, error) {
 	if len(opts) == 0 || opts[0] == nil {
-		return codec.DefaultOption, nil
+		return server.DefaultOption, nil
 	}
 	if len(opts) != 1 {
 		return nil, errors.New("number of options is more than 1")
 	}
 	opt := opts[0]
-	opt.MagicNumber = codec.DefaultOption.MagicNumber
+	opt.MagicNumber = server.DefaultOption.MagicNumber
 	if opt.CodecType == "" {
-		opt.CodecType = codec.DefaultOption.CodecType
+		opt.CodecType = server.DefaultOption.CodecType
 	}
 	return opt, nil
 }
@@ -202,9 +203,9 @@ type clientResult struct {
 	err    error
 }
 
-type newClientFunc func(conn net.Conn, opt *codec.Option) (client *Client, err error)
+type newClientFunc func(conn net.Conn, opt *server.Option) (client *Client, err error)
 
-func dialTimeout(f newClientFunc, network, address string, opts ...*codec.Option) (client *Client, err error) {
+func dialTimeout(f newClientFunc, network, address string, opts ...*server.Option) (client *Client, err error) {
 	opt, err := parseOption(opts...)
 	if err != nil {
 		return nil, err
@@ -236,7 +237,7 @@ func dialTimeout(f newClientFunc, network, address string, opts ...*codec.Option
 
 }
 
-func Dial(network, address string, opts ...*codec.Option) (client *Client, err error) {
+func Dial(network, address string, opts ...*server.Option) (client *Client, err error) {
 	//
 	return dialTimeout(NewClient, network, address, opts...)
 }
