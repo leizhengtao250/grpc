@@ -29,6 +29,5 @@ func Test_client(t *testing.T) {
 		return
 	}
 	defer cli.Close()
-	cli.registerCall
 
 }
