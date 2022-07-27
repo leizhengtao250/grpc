@@ -322,6 +322,9 @@ func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func (server *Server) HandleHTTP() {
 	http.Handle(DefaultRpcPath, server)
 }
+
+var DefaultServer = NewServer()
+
 func HandleHTTP() {
 	DefaultServer.HandleHTTP()
 }
